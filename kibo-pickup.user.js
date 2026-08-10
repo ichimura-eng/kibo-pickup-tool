@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.1.0
+// @version      0.2.0
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -42,8 +42,9 @@
     defaultHashtag: '#きぼうを見よう',
     maxRangeDays: 31, // 収集の安定性のため期間は最大1ヶ月程度に制限
     scrollIntervalMs: 1200, // 自動スクロールの間隔
-    stableRoundsToFinish: 6, // 新規投稿が増えない状態が何回続いたら完了とみなすか
-    hardTimeoutMs: 120000, // 念のための最大タイムアウト（2分）
+    scrollStepRatio: 0.85, // 1回のスクロール量（画面の高さに対する割合）。Xの仮想リスト対策で一気に最下部までは飛ばさない
+    stableRoundsToFinish: 6, // 「最下部に到達していて、新規投稿もない」状態が何回続いたら完了とみなすか
+    hardTimeoutMs: 180000, // 念のための最大タイムアウト（3分）
     stateKey: 'kibo_pickup_pending_search',
     selectors: {
       tweetArticle: 'article[data-testid="tweet"]',
@@ -117,13 +118,28 @@
     return { url: `https://x.com${href}`, id: href.match(/\/status\/(\d+)/)[1] };
   }
 
+  function extractVideoThumb(video) {
+    // X側の実装差異に備えて複数のパターンを順に試す
+    const videoTag = video.querySelector('video[poster]');
+    if (videoTag) {
+      const poster = videoTag.getAttribute('poster');
+      if (poster) return poster;
+    }
+    const img = video.querySelector('img[src]');
+    if (img && img.src) return img.src;
+    // background-image で持たせているパターン
+    const bgCandidates = video.querySelectorAll('[style*="background-image"]');
+    for (const el of bgCandidates) {
+      const m = (el.style.backgroundImage || '').match(/url\(["']?(.*?)["']?\)/);
+      if (m && m[1]) return m[1];
+    }
+    return '';
+  }
+
   function extractMedia(article) {
     const video = article.querySelector(CONFIG.selectors.videoPlayer);
     if (video) {
-      const videoTag = video.querySelector('video');
-      const posterImg = video.querySelector('img');
-      const thumb = (videoTag && videoTag.getAttribute('poster')) || (posterImg && posterImg.src) || '';
-      return { type: 'video', thumb };
+      return { type: 'video', thumb: extractVideoThumb(video) };
     }
     const photoDiv = article.querySelector(CONFIG.selectors.tweetPhoto);
     if (photoDiv) {
@@ -243,6 +259,14 @@
       border: 2px solid transparent;
     }
     #kibo-pickup-panel .kp-thumb.kp-selected { border-color: #1d9bf0; }
+    #kibo-pickup-panel .kp-thumb.kp-no-thumb {
+      background: #2f3336;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #kibo-pickup-panel .kp-thumb.kp-no-thumb::after {
+      content: '画像取得失敗';
+      font-size: 10px; color: #8b98a5;
+    }
     #kibo-pickup-panel .kp-thumb img,
     #kibo-pickup-panel .kp-thumb video {
       width: 100%; height: 100%; object-fit: cover; display: block;
@@ -417,9 +441,19 @@
           seenIds.add(f.id);
           items.push(f);
         });
-        stableRounds = 0;
-      } else if (!document.querySelector(CONFIG.selectors.progressBar)) {
+      }
+
+      const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 100;
+      const loading = !!document.querySelector(CONFIG.selectors.progressBar);
+
+      if (found.length === 0 && atBottom && !loading) {
+        // 最下部まで到達していて、新規投稿もロード中表示もない → 完了に近づいている
         stableRounds += 1;
+      } else {
+        // 新規投稿が見つかった場合はもちろん、
+        // 「まだ最下部に到達していない」「ロード中」の場合も完了カウントしない
+        // （仮想リストで一部がまだ描画されていないだけの可能性があるため）
+        stableRounds = 0;
       }
       renderProgress();
 
@@ -431,7 +465,10 @@
         finish();
         return;
       }
-      window.scrollTo(0, document.body.scrollHeight);
+      // Xのタイムラインは仮想リスト（画面付近だけ描画・離れると消える）のため、
+      // 一気に最下部までジャンプすると間の投稿が描画されずに読み飛ばされる。
+      // そのため画面の高さの何割かずつ、少しずつ進める。
+      window.scrollBy(0, Math.round(window.innerHeight * CONFIG.scrollStepRatio));
       setTimeout(tick, CONFIG.scrollIntervalMs);
     }
 
@@ -473,8 +510,13 @@
       cell.dataset.id = item.id;
 
       const img = document.createElement('img');
-      img.src = item.thumb || '';
       img.loading = 'lazy';
+      if (item.thumb) {
+        img.src = item.thumb;
+      } else {
+        // サムネイル画像を取得できなかった場合、真っ黒に見えないようプレースホルダー表示にする
+        cell.classList.add('kp-no-thumb');
+      }
       cell.appendChild(img);
 
       if (item.type === 'video') {
@@ -505,9 +547,10 @@
         });
       }
 
+      // 未選択時は空の丸枠のみ表示し、選択時にだけ✓を入れる
+      // （常に✓を表示すると「全部チェック済み」に見えてしまうため）
       const check = document.createElement('div');
       check.className = 'kp-check';
-      check.textContent = '✓';
       cell.appendChild(check);
 
       if (item.text) {
@@ -522,9 +565,11 @@
         if (selected.has(item.id)) {
           selected.delete(item.id);
           cell.classList.remove('kp-selected');
+          check.textContent = '';
         } else {
           selected.add(item.id);
           cell.classList.add('kp-selected');
+          check.textContent = '✓';
         }
         updateFooter();
       });

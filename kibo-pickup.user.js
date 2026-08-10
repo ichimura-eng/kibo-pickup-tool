@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.6
+// @version      0.2.7
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -148,8 +148,14 @@
     // （「複数枚あるのに1件だけの投稿に見える」問題に気づけるようにするため）。
     // 取得できた画像・動画サムネイルのURLは全部thumbsに集めておき、
     // 一覧側でマウスオーバー中に切り替え表示するのに使う
-    const photoDivs = Array.from(article.querySelectorAll(CONFIG.selectors.tweetPhoto));
     const videoDiv = article.querySelector(CONFIG.selectors.videoPlayer);
+    // 動画のポスター(サムネイル)表示にも写真と同じ data-testid="tweetPhoto" が
+    // 使われているケースがあり、そのままだと「動画1件のみ」の投稿を
+    // 「動画+写真=複数」と二重に数えてしまう。動画プレイヤーの内部にある
+    // tweetPhoto は除外し、動画の外にある独立した写真だけを数える
+    const photoDivs = Array.from(article.querySelectorAll(CONFIG.selectors.tweetPhoto)).filter(
+      (div) => !videoDiv || !videoDiv.contains(div)
+    );
     const count = photoDivs.length + (videoDiv ? 1 : 0);
     if (count === 0) return null;
 

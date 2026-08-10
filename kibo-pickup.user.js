@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.4
+// @version      0.2.5
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -141,25 +141,25 @@
 
   function extractMedia(article) {
     // 1件の投稿に画像・動画が複数付いている場合があるため、まず全件数を数える
-    // （1枚目の取得に失敗しても他の枚数から拾えるようにするため、かつ
-    //   「複数枚あるのに1件だけの投稿に見える」問題に気づけるようにするため）
+    // （「複数枚あるのに1件だけの投稿に見える」問題に気づけるようにするため）。
+    // 取得できた画像・動画サムネイルのURLは全部thumbsに集めておき、
+    // 一覧側でマウスオーバー中に切り替え表示するのに使う
     const photoDivs = Array.from(article.querySelectorAll(CONFIG.selectors.tweetPhoto));
     const videoDiv = article.querySelector(CONFIG.selectors.videoPlayer);
     const count = photoDivs.length + (videoDiv ? 1 : 0);
     if (count === 0) return null;
 
     const type = videoDiv ? 'video' : 'photo';
-    let thumb = videoDiv ? extractVideoThumb(videoDiv) : '';
-    if (!thumb) {
-      for (const div of photoDivs) {
-        const url = extractImageUrl(div);
-        if (url) {
-          thumb = url;
-          break;
-        }
-      }
+    const thumbs = [];
+    if (videoDiv) {
+      const t = extractVideoThumb(videoDiv);
+      if (t) thumbs.push(t);
     }
-    return { type, thumb, count };
+    photoDivs.forEach((div) => {
+      const url = extractImageUrl(div);
+      if (url) thumbs.push(url);
+    });
+    return { type, thumb: thumbs[0] || '', count, thumbs };
   }
 
   function extractText(article) {
@@ -181,6 +181,7 @@
         type: media.type,
         thumb: media.thumb,
         count: media.count,
+        thumbs: media.thumbs,
         text: extractText(article),
       });
     });
@@ -287,7 +288,7 @@
       display: flex; align-items: center; justify-content: center;
     }
     #kibo-pickup-panel .kp-thumb.kp-no-thumb::after {
-      content: 'サムネイル取得失敗\A マウスを乗せるとプレビュー';
+      content: 'サムネイル取得失敗\A 右下のリンクから元投稿を確認できます';
       white-space: pre-wrap;
       text-align: center;
       font-size: 10px; color: #8b98a5;
@@ -297,10 +298,6 @@
     #kibo-pickup-panel .kp-thumb video {
       position: absolute; inset: 0; z-index: 1;
       width: 100%; height: 100%; object-fit: cover; display: block;
-    }
-    #kibo-pickup-panel .kp-thumb iframe {
-      position: absolute; inset: 0; z-index: 1;
-      width: 100%; height: 100%; border: 0; display: block; background: #000;
     }
     #kibo-pickup-panel .kp-multi {
       position: absolute; bottom: 4px; left: 4px; z-index: 3;
@@ -324,6 +321,13 @@
       width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
       font-size: 11px; color: #fff; pointer-events: none;
     }
+    #kibo-pickup-panel .kp-open {
+      position: absolute; bottom: 4px; right: 4px; z-index: 3;
+      background: rgba(0,0,0,0.55); border-radius: 50%;
+      width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: #fff; text-decoration: none;
+    }
+    #kibo-pickup-panel .kp-open:hover { background: rgba(29,155,240,0.85); }
     /* キャプションはサムネイル画像に重ねず、下に別枠で全文表示する
        （画像に重ねると動画のクリック操作を邪魔してしまうため） */
     #kibo-pickup-panel .kp-caption {
@@ -588,31 +592,41 @@
         thumb.appendChild(multi);
       }
 
-      // マウスオーバーで埋め込みプレビュー（X公式の埋め込みウィジェットを利用）。
-      // 動画付き・複数枚・サムネイル取得失敗のいずれかの場合に有効化する
-      // （iframeはクロスオリジンなので、その中をクリックしてもカード側のクリック
-      //  ＝選択トグルは発火しない。再生操作と選択操作が自然に競合しない）
-      if (item.type === 'video' || item.count > 1 || !item.thumb) {
-        let hoverTimer = null;
+      // 以前はマウスオーバーでX公式の埋め込み(iframe)を表示していたが、
+      // X.com自身のCSP(セキュリティポリシー)で外部埋め込みがブロックされ、
+      // 壊れた表示になることが判明したため撤去。
+      // 代わりに、複数枚取得できている場合はマウスオーバー中にサムネイルを
+      // 自動で切り替え表示する（外部埋め込み不要・CSPの影響を受けない）
+      if (item.thumbs && item.thumbs.length > 1) {
+        let cycleTimer = null;
+        let idx = 0;
         thumb.addEventListener('mouseenter', () => {
-          hoverTimer = setTimeout(() => {
-            if (thumb.querySelector('iframe')) return;
-            const iframe = document.createElement('iframe');
-            iframe.src = `https://platform.twitter.com/embed/Tweet.html?id=${item.id}&theme=dark&hideCard=false&hideThread=true`;
-            iframe.setAttribute('allow', 'autoplay; encrypted-media');
-            img.style.display = 'none';
-            thumb.insertBefore(iframe, thumb.firstChild);
-          }, 250);
+          cycleTimer = setInterval(() => {
+            idx = (idx + 1) % item.thumbs.length;
+            img.src = item.thumbs[idx];
+          }, 700);
         });
         thumb.addEventListener('mouseleave', () => {
-          clearTimeout(hoverTimer);
-          const iframe = thumb.querySelector('iframe');
-          if (iframe) {
-            iframe.remove();
-            img.style.display = '';
-          }
+          clearInterval(cycleTimer);
+          idx = 0;
+          img.src = item.thumbs[0];
         });
       }
+
+      // 動画本体の再生や、取得できなかった画像の確認は元のツイートを
+      // 開いてもらうのが一番確実なので、リンクを常に付けておく
+      const openLink = document.createElement('a');
+      openLink.className = 'kp-open';
+      openLink.href = item.url;
+      openLink.target = '_blank';
+      openLink.rel = 'noopener noreferrer';
+      openLink.title = '元のツイートを開く';
+      openLink.textContent = '↗';
+      openLink.addEventListener('click', (e) => {
+        // カード全体のクリック(選択トグル)には巻き込まない
+        e.stopPropagation();
+      });
+      thumb.appendChild(openLink);
 
       // 未選択時は空の丸枠のみ表示し、選択時にだけ✓を入れる
       // （常に✓を表示すると「全部チェック済み」に見えてしまうため）

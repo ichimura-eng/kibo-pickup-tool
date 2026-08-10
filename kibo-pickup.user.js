@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.0
+// @version      0.2.1
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -223,6 +223,7 @@
       width: 100%;
       font-size: 12px;
     }
+    #kibo-pickup-panel input[type="date"] { cursor: pointer; }
     #kibo-pickup-panel button {
       background: #1d9bf0;
       color: #fff;
@@ -370,6 +371,22 @@
       </div>
       <div class="kp-status">期間は最大${CONFIG.maxRangeDays}日程度までにしてください（収集の安定性のため）。</div>
     `;
+
+    // 日付欄は「年/月/日」を個別に打つ操作が分かりにくいという指摘があったため、
+    // どこをクリックしてもカレンダーが開く形に統一する（対応ブラウザのみ）
+    ['kp-since', 'kp-until'].forEach((id) => {
+      const el = bodyEl.querySelector('#' + id);
+      el.addEventListener('click', () => {
+        if (typeof el.showPicker === 'function') {
+          try {
+            el.showPicker();
+          } catch (e) {
+            // ユーザー操作外からの呼び出しなど、失敗しても通常入力にフォールバックするだけなので無視
+          }
+        }
+      });
+    });
+
     bodyEl.querySelector('#kp-search-btn').addEventListener('click', () => {
       const hashtag = bodyEl.querySelector('#kp-hashtag').value.trim() || CONFIG.defaultHashtag;
       const s = bodyEl.querySelector('#kp-since').value;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.5
+// @version      0.2.6
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -115,7 +115,11 @@
     if (!link) return null;
     const href = link.getAttribute('href');
     if (!href || !/\/status\/\d+/.test(href)) return null;
-    return { url: `https://x.com${href}`, id: href.match(/\/status\/(\d+)/)[1] };
+    // datetime属性（ISO8601）を投稿日時として保持しておく。
+    // スプレッドシートには「下の行ほど最新」の並びで貼り付けたいため、
+    // コピー時にこれで古い順に並び替える
+    const datetime = timeEl.getAttribute('datetime') || '';
+    return { url: `https://x.com${href}`, id: href.match(/\/status\/(\d+)/)[1], datetime };
   }
 
   function extractImageUrl(container) {
@@ -178,6 +182,7 @@
       found.push({
         id: permalink.id,
         url: permalink.url,
+        datetime: permalink.datetime,
         type: media.type,
         thumb: media.thumb,
         count: media.count,
@@ -299,12 +304,20 @@
       position: absolute; inset: 0; z-index: 1;
       width: 100%; height: 100%; object-fit: cover; display: block;
     }
-    #kibo-pickup-panel .kp-multi {
-      position: absolute; bottom: 4px; left: 4px; z-index: 3;
-      background: rgba(0,0,0,0.65); border-radius: 999px;
-      padding: 2px 7px;
-      font-size: 10px; color: #fff; pointer-events: none;
+    /* kp-multi / kp-play は操作できない「ラベル」。
+       操作できる丸ボタン(kp-check / kp-open)と見た目で区別するため、
+       円形・白枠は使わず、平たい角丸タグの見た目にする */
+    #kibo-pickup-panel .kp-multi,
+    #kibo-pickup-panel .kp-play {
+      position: absolute; z-index: 3;
+      background: rgba(0,0,0,0.6);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 10px; color: #d7dbdc; pointer-events: none;
+      line-height: 1.4;
     }
+    #kibo-pickup-panel .kp-multi { bottom: 4px; left: 4px; }
+    #kibo-pickup-panel .kp-play { top: 4px; left: 4px; }
     #kibo-pickup-panel .kp-check {
       position: absolute; top: 4px; right: 4px; z-index: 3;
       width: 22px; height: 22px; border-radius: 50%;
@@ -314,12 +327,6 @@
     }
     #kibo-pickup-panel .kp-card.kp-selected .kp-check {
       background: #1d9bf0; border-color: #1d9bf0;
-    }
-    #kibo-pickup-panel .kp-play {
-      position: absolute; top: 4px; left: 4px; z-index: 3;
-      background: rgba(0,0,0,0.55); border-radius: 50%;
-      width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
-      font-size: 11px; color: #fff; pointer-events: none;
     }
     #kibo-pickup-panel .kp-open {
       position: absolute; bottom: 4px; right: 4px; z-index: 3;
@@ -577,9 +584,10 @@
       thumb.appendChild(img);
 
       if (item.type === 'video') {
+        // ボタンに見えないよう、記号(▶)ではなくテキストのラベルにする
         const play = document.createElement('div');
         play.className = 'kp-play';
-        play.textContent = '▶';
+        play.textContent = '動画';
         thumb.appendChild(play);
       }
 
@@ -666,7 +674,12 @@
         </span>
       `;
       footerEl.querySelector('#kp-copy-btn').addEventListener('click', () => {
-        const urls = items.filter((i) => selected.has(i.id)).map((i) => i.url);
+        // スプレッドシートは「下の行ほど最新の投稿」の並びのため、
+        // コピーするURLも古い日付順（昇順）に並び替えてから渡す
+        const urls = items
+          .filter((i) => selected.has(i.id))
+          .sort((a, b) => (a.datetime || '').localeCompare(b.datetime || ''))
+          .map((i) => i.url);
         if (urls.length === 0) {
           alert('選択された投稿がありません。');
           return;

@@ -1,14 +1,12 @@
 # kibo-pickup-tool
 
-「[きぼうを見よう](https://lookup.kibo.space/)」の「[みんなが見たきぼう](https://lookup.kibo.space/posts/)」ページ更新作業を効率化するTampermonkeyユーザースクリプトです。
-
-Xで「#きぼうを見よう」を期間指定で検索し、画像・動画が付いた投稿だけをサムネイル一覧で確認 → 採用したい投稿にチェック → URLをまとめてコピーできます。コピーしたURLは[スプレッドシート「きぼうを見ようTweet更新」](https://docs.google.com/spreadsheets/d/1xRaBhaAE0zZYqpchysRTzXNMTDdZODJKC7rDhqvLPIM/edit?gid=0#gid=0)のURL列に貼り付けて使います。
+Xで「#きぼうを見よう」を期間指定で検索し、画像・動画が付いた投稿だけをサムネイル一覧で確認 → 採用したい投稿にチェック → URLをまとめてコピーできます。コピーしたURLは、社内で使っている更新用スプレッドシートのURL列に貼り付けて使います（スプレッドシートへのリンクは社内資料を参照してください。このリポジトリはPublicのため、ここには載せていません）。
 
 ## 初回セットアップ
 
-1. [Tampermonkey](https://www.tampermonkey.net/)をブラウザにインストールする（Chrome Web Storeで「Chromeに追加」）
+1. <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener noreferrer">Tampermonkey</a>をブラウザにインストールする（Chrome Web Storeで「Chromeに追加」）
 2. 以下のリンクを開く → Tampermonkeyが「インストールしますか？」と聞いてくるので「インストール」をクリック
-   - https://raw.githubusercontent.com/ichimura-eng/kibo-pickup-tool/main/kibo-pickup.user.js
+   - <a href="https://raw.githubusercontent.com/ichimura-eng/kibo-pickup-tool/main/kibo-pickup.user.js" target="_blank" rel="noopener noreferrer">https://raw.githubusercontent.com/ichimura-eng/kibo-pickup-tool/main/kibo-pickup.user.js</a>
 3. これで準備完了。x.com（またはtwitter.com）を開くと、画面右上にツールのパネルが表示されます。
 
 ## 使い方

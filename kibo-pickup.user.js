@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.3
+// @version      0.2.4
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -118,17 +118,11 @@
     return { url: `https://x.com${href}`, id: href.match(/\/status\/(\d+)/)[1] };
   }
 
-  function extractVideoThumb(video) {
-    // X側の実装差異に備えて複数のパターンを順に試す
-    const videoTag = video.querySelector('video[poster]');
-    if (videoTag) {
-      const poster = videoTag.getAttribute('poster');
-      if (poster) return poster;
-    }
-    const img = video.querySelector('img[src]');
+  function extractImageUrl(container) {
+    // X側の実装差異（<img>のsrcで持つ場合と、background-imageで持つ場合の両方）に対応
+    const img = container.querySelector('img[src]');
     if (img && img.src) return img.src;
-    // background-image で持たせているパターン
-    const bgCandidates = video.querySelectorAll('[style*="background-image"]');
+    const bgCandidates = container.querySelectorAll('[style*="background-image"]');
     for (const el of bgCandidates) {
       const m = (el.style.backgroundImage || '').match(/url\(["']?(.*?)["']?\)/);
       if (m && m[1]) return m[1];
@@ -136,17 +130,36 @@
     return '';
   }
 
+  function extractVideoThumb(video) {
+    const videoTag = video.querySelector('video[poster]');
+    if (videoTag) {
+      const poster = videoTag.getAttribute('poster');
+      if (poster) return poster;
+    }
+    return extractImageUrl(video);
+  }
+
   function extractMedia(article) {
-    const video = article.querySelector(CONFIG.selectors.videoPlayer);
-    if (video) {
-      return { type: 'video', thumb: extractVideoThumb(video) };
+    // 1件の投稿に画像・動画が複数付いている場合があるため、まず全件数を数える
+    // （1枚目の取得に失敗しても他の枚数から拾えるようにするため、かつ
+    //   「複数枚あるのに1件だけの投稿に見える」問題に気づけるようにするため）
+    const photoDivs = Array.from(article.querySelectorAll(CONFIG.selectors.tweetPhoto));
+    const videoDiv = article.querySelector(CONFIG.selectors.videoPlayer);
+    const count = photoDivs.length + (videoDiv ? 1 : 0);
+    if (count === 0) return null;
+
+    const type = videoDiv ? 'video' : 'photo';
+    let thumb = videoDiv ? extractVideoThumb(videoDiv) : '';
+    if (!thumb) {
+      for (const div of photoDivs) {
+        const url = extractImageUrl(div);
+        if (url) {
+          thumb = url;
+          break;
+        }
+      }
     }
-    const photoDiv = article.querySelector(CONFIG.selectors.tweetPhoto);
-    if (photoDiv) {
-      const img = photoDiv.querySelector('img');
-      return { type: 'photo', thumb: img ? img.src : '' };
-    }
-    return null;
+    return { type, thumb, count };
   }
 
   function extractText(article) {
@@ -167,6 +180,7 @@
         url: permalink.url,
         type: media.type,
         thumb: media.thumb,
+        count: media.count,
         text: extractText(article),
       });
     });
@@ -273,8 +287,11 @@
       display: flex; align-items: center; justify-content: center;
     }
     #kibo-pickup-panel .kp-thumb.kp-no-thumb::after {
-      content: '画像取得失敗';
+      content: 'サムネイル取得失敗\A マウスを乗せるとプレビュー';
+      white-space: pre-wrap;
+      text-align: center;
       font-size: 10px; color: #8b98a5;
+      padding: 0 8px;
     }
     #kibo-pickup-panel .kp-thumb img,
     #kibo-pickup-panel .kp-thumb video {
@@ -284,6 +301,12 @@
     #kibo-pickup-panel .kp-thumb iframe {
       position: absolute; inset: 0; z-index: 1;
       width: 100%; height: 100%; border: 0; display: block; background: #000;
+    }
+    #kibo-pickup-panel .kp-multi {
+      position: absolute; bottom: 4px; left: 4px; z-index: 3;
+      background: rgba(0,0,0,0.65); border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 10px; color: #fff; pointer-events: none;
     }
     #kibo-pickup-panel .kp-check {
       position: absolute; top: 4px; right: 4px; z-index: 3;
@@ -554,10 +577,22 @@
         play.className = 'kp-play';
         play.textContent = '▶';
         thumb.appendChild(play);
+      }
 
-        // マウスオーバーで埋め込み再生（X公式の埋め込みウィジェットを利用）。
-        // iframeはクロスオリジンなので、その中をクリックしてもカード側のクリック
-        // （選択トグル）は発火しない＝再生操作と選択操作が自然に競合しない
+      if (item.count > 1) {
+        // 複数枚（画像複数、または画像+動画の組み合わせ）の投稿であることが
+        // サムネイル1枚だけでは分からないため、件数バッジを付ける
+        const multi = document.createElement('div');
+        multi.className = 'kp-multi';
+        multi.textContent = `複数(${item.count})`;
+        thumb.appendChild(multi);
+      }
+
+      // マウスオーバーで埋め込みプレビュー（X公式の埋め込みウィジェットを利用）。
+      // 動画付き・複数枚・サムネイル取得失敗のいずれかの場合に有効化する
+      // （iframeはクロスオリジンなので、その中をクリックしてもカード側のクリック
+      //  ＝選択トグルは発火しない。再生操作と選択操作が自然に競合しない）
+      if (item.type === 'video' || item.count > 1 || !item.thumb) {
         let hoverTimer = null;
         thumb.addEventListener('mouseenter', () => {
           hoverTimer = setTimeout(() => {

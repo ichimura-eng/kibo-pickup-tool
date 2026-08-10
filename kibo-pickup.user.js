@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.1
+// @version      0.2.3
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -181,7 +181,7 @@
       position: fixed;
       top: 12px;
       right: 12px;
-      width: 360px;
+      width: 440px;
       max-height: 92vh;
       background: #15181c;
       color: #e7e9ea;
@@ -247,19 +247,27 @@
     }
     #kibo-pickup-panel .kp-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
     }
-    #kibo-pickup-panel .kp-thumb {
+    #kibo-pickup-panel .kp-card {
       position: relative;
-      aspect-ratio: 1 / 1;
-      border-radius: 6px;
+      border-radius: 8px;
       overflow: hidden;
       cursor: pointer;
       background: #1e2226;
       border: 2px solid transparent;
+      display: flex;
+      flex-direction: column;
     }
-    #kibo-pickup-panel .kp-thumb.kp-selected { border-color: #1d9bf0; }
+    #kibo-pickup-panel .kp-card.kp-selected { border-color: #1d9bf0; }
+    #kibo-pickup-panel .kp-thumb {
+      position: relative;
+      aspect-ratio: 4 / 3;
+      overflow: hidden;
+      background: #1e2226;
+      flex-shrink: 0;
+    }
     #kibo-pickup-panel .kp-thumb.kp-no-thumb {
       background: #2f3336;
       display: flex; align-items: center; justify-content: center;
@@ -270,39 +278,38 @@
     }
     #kibo-pickup-panel .kp-thumb img,
     #kibo-pickup-panel .kp-thumb video {
+      position: absolute; inset: 0; z-index: 1;
       width: 100%; height: 100%; object-fit: cover; display: block;
     }
     #kibo-pickup-panel .kp-thumb iframe {
+      position: absolute; inset: 0; z-index: 1;
       width: 100%; height: 100%; border: 0; display: block; background: #000;
     }
     #kibo-pickup-panel .kp-check {
-      position: absolute; top: 4px; right: 4px;
-      width: 20px; height: 20px; border-radius: 50%;
+      position: absolute; top: 4px; right: 4px; z-index: 3;
+      width: 22px; height: 22px; border-radius: 50%;
       background: rgba(0,0,0,0.55); border: 1.5px solid #fff;
       display: flex; align-items: center; justify-content: center;
-      font-size: 12px; color: #fff;
+      font-size: 13px; color: #fff;
     }
-    #kibo-pickup-panel .kp-thumb.kp-selected .kp-check {
+    #kibo-pickup-panel .kp-card.kp-selected .kp-check {
       background: #1d9bf0; border-color: #1d9bf0;
     }
     #kibo-pickup-panel .kp-play {
-      position: absolute; top: 4px; left: 4px;
+      position: absolute; top: 4px; left: 4px; z-index: 3;
       background: rgba(0,0,0,0.55); border-radius: 50%;
-      width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
-      font-size: 10px; color: #fff; pointer-events: none;
+      width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: #fff; pointer-events: none;
     }
+    /* キャプションはサムネイル画像に重ねず、下に別枠で全文表示する
+       （画像に重ねると動画のクリック操作を邪魔してしまうため） */
     #kibo-pickup-panel .kp-caption {
-      position: absolute; left: 0; right: 0; bottom: 0;
-      background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0));
-      color: #fff; font-size: 10px; line-height: 1.3;
-      padding: 10px 4px 4px;
-      max-height: 100%;
-      overflow: hidden;
-      opacity: 0;
-      transition: opacity 0.15s;
-      pointer-events: none;
+      background: #1e2226;
+      color: #d7dbdc; font-size: 11px; line-height: 1.4;
+      padding: 6px 8px;
+      word-break: break-word;
+      white-space: pre-wrap;
     }
-    #kibo-pickup-panel .kp-thumb:hover .kp-caption { opacity: 1; }
     #kibo-pickup-panel .kp-footer {
       border-top: 1px solid #2f3336;
       padding: 10px 12px;
@@ -522,9 +529,15 @@
     }
 
     items.forEach((item) => {
-      const cell = document.createElement('div');
-      cell.className = 'kp-thumb';
-      cell.dataset.id = item.id;
+      // カード = サムネイル（画像・動画）＋ その下の本文キャプション、という2段構成。
+      // 本文を画像に重ねると動画のクリック操作を邪魔するため、あえて分離している。
+      const card = document.createElement('div');
+      card.className = 'kp-card';
+      card.dataset.id = item.id;
+
+      const thumb = document.createElement('div');
+      thumb.className = 'kp-thumb';
+      card.appendChild(thumb);
 
       const img = document.createElement('img');
       img.loading = 'lazy';
@@ -532,31 +545,33 @@
         img.src = item.thumb;
       } else {
         // サムネイル画像を取得できなかった場合、真っ黒に見えないようプレースホルダー表示にする
-        cell.classList.add('kp-no-thumb');
+        thumb.classList.add('kp-no-thumb');
       }
-      cell.appendChild(img);
+      thumb.appendChild(img);
 
       if (item.type === 'video') {
         const play = document.createElement('div');
         play.className = 'kp-play';
         play.textContent = '▶';
-        cell.appendChild(play);
+        thumb.appendChild(play);
 
-        // マウスオーバーで埋め込み再生（X公式の埋め込みウィジェットを利用）
+        // マウスオーバーで埋め込み再生（X公式の埋め込みウィジェットを利用）。
+        // iframeはクロスオリジンなので、その中をクリックしてもカード側のクリック
+        // （選択トグル）は発火しない＝再生操作と選択操作が自然に競合しない
         let hoverTimer = null;
-        cell.addEventListener('mouseenter', () => {
+        thumb.addEventListener('mouseenter', () => {
           hoverTimer = setTimeout(() => {
-            if (cell.querySelector('iframe')) return;
+            if (thumb.querySelector('iframe')) return;
             const iframe = document.createElement('iframe');
             iframe.src = `https://platform.twitter.com/embed/Tweet.html?id=${item.id}&theme=dark&hideCard=false&hideThread=true`;
             iframe.setAttribute('allow', 'autoplay; encrypted-media');
             img.style.display = 'none';
-            cell.insertBefore(iframe, cell.firstChild);
+            thumb.insertBefore(iframe, thumb.firstChild);
           }, 250);
         });
-        cell.addEventListener('mouseleave', () => {
+        thumb.addEventListener('mouseleave', () => {
           clearTimeout(hoverTimer);
-          const iframe = cell.querySelector('iframe');
+          const iframe = thumb.querySelector('iframe');
           if (iframe) {
             iframe.remove();
             img.style.display = '';
@@ -568,30 +583,29 @@
       // （常に✓を表示すると「全部チェック済み」に見えてしまうため）
       const check = document.createElement('div');
       check.className = 'kp-check';
-      cell.appendChild(check);
+      thumb.appendChild(check);
 
       if (item.text) {
         const caption = document.createElement('div');
         caption.className = 'kp-caption';
-        caption.textContent = item.text.length > 60 ? item.text.slice(0, 60) + '…' : item.text;
-        cell.appendChild(caption);
+        caption.textContent = item.text; // 省略せず全文表示する
+        card.appendChild(caption);
       }
 
-      cell.addEventListener('click', (e) => {
-        // 動画再生中(iframe表示中)にクリックしても選択トグルは効かせる
+      card.addEventListener('click', () => {
         if (selected.has(item.id)) {
           selected.delete(item.id);
-          cell.classList.remove('kp-selected');
+          card.classList.remove('kp-selected');
           check.textContent = '';
         } else {
           selected.add(item.id);
-          cell.classList.add('kp-selected');
+          card.classList.add('kp-selected');
           check.textContent = '✓';
         }
         updateFooter();
       });
 
-      grid.appendChild(cell);
+      grid.appendChild(card);
     });
 
     function updateFooter() {

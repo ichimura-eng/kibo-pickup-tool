@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.3.0
+// @version      0.3.1
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -484,11 +484,36 @@
   // =========================================================
   function startCollecting(hashtag, since, until, phase, seedItems) {
     ensurePanel();
-    if (!isLoggedIn()) {
-      renderWarning('Xにログインしてから実行してください。（ログイン状態を検知できませんでした）');
-      return;
-    }
+    // ページ遷移直後はXのアプリがまだ描画し切っていないことがあり、
+    // その瞬間に1回だけログイン判定すると「未ログイン」に誤判定されることがある
+    // （手動リロードだと通ることが多いのはこのタイミング差のため）。
+    // そのため即座に諦めず、数秒間はリトライしてから判定する
+    bodyEl.innerHTML = `<div class="kp-status">ページの読み込みを確認中...</div>`;
+    footerEl.innerHTML = '';
+    waitForLogin(
+      () => beginCollecting(hashtag, since, until, phase, seedItems),
+      () => renderWarning('Xにログインしてから実行してください。（ログイン状態を検知できませんでした）')
+    );
+  }
 
+  function waitForLogin(onReady, onTimeout, maxWaitMs) {
+    const limit = maxWaitMs || 8000;
+    const intervalMs = 300;
+    const startedAt = Date.now();
+    (function poll() {
+      if (isLoggedIn()) {
+        onReady();
+        return;
+      }
+      if (Date.now() - startedAt >= limit) {
+        onTimeout();
+        return;
+      }
+      setTimeout(poll, intervalMs);
+    })();
+  }
+
+  function beginCollecting(hashtag, since, until, phase, seedItems) {
     const items = seedItems ? seedItems.slice() : []; // フェーズをまたいで引き継ぐ
     const seenIds = new Set(items.map((i) => i.id));
     let stableRounds = 0;

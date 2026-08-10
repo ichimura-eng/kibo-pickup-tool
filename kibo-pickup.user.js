@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.7
+// @version      0.2.8
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -151,10 +151,12 @@
     const videoDiv = article.querySelector(CONFIG.selectors.videoPlayer);
     // 動画のポスター(サムネイル)表示にも写真と同じ data-testid="tweetPhoto" が
     // 使われているケースがあり、そのままだと「動画1件のみ」の投稿を
-    // 「動画+写真=複数」と二重に数えてしまう。動画プレイヤーの内部にある
-    // tweetPhoto は除外し、動画の外にある独立した写真だけを数える
+    // 「動画+写真=複数」と二重に数えてしまう。前回、動画プレイヤーの内部にある
+    // tweetPhotoだけを除外したが直っていなかった＝実際は逆に、tweetPhotoが
+    // videoPlayerを包む親要素になっているパターンもあったため、
+    // 親子どちらの包含関係でも除外するようにする
     const photoDivs = Array.from(article.querySelectorAll(CONFIG.selectors.tweetPhoto)).filter(
-      (div) => !videoDiv || !videoDiv.contains(div)
+      (div) => !videoDiv || (!videoDiv.contains(div) && !div.contains(videoDiv))
     );
     const count = photoDivs.length + (videoDiv ? 1 : 0);
     if (count === 0) return null;
@@ -311,19 +313,23 @@
       width: 100%; height: 100%; object-fit: cover; display: block;
     }
     /* kp-multi / kp-play は操作できない「ラベル」。
-       操作できる丸ボタン(kp-check / kp-open)と見た目で区別するため、
-       円形・白枠は使わず、平たい角丸タグの見た目にする */
+       操作できる丸ボタン(kp-check / kp-open)と見た目で区別するため
+       円形にはせず、白枠付きの角丸タグにして「ラベルである」ことを
+       はっきりさせる。2つある場合は同じ行に左詰めで並べる */
+    #kibo-pickup-panel .kp-labels {
+      position: absolute; top: 4px; left: 4px; z-index: 3;
+      display: flex; gap: 4px;
+    }
     #kibo-pickup-panel .kp-multi,
     #kibo-pickup-panel .kp-play {
-      position: absolute; z-index: 3;
-      background: rgba(0,0,0,0.6);
+      background: rgba(0,0,0,0.7);
+      border: 1px solid rgba(255,255,255,0.8);
       border-radius: 4px;
       padding: 2px 6px;
-      font-size: 10px; color: #d7dbdc; pointer-events: none;
+      font-size: 10px; color: #fff; pointer-events: none;
       line-height: 1.4;
+      white-space: nowrap;
     }
-    #kibo-pickup-panel .kp-multi { bottom: 4px; left: 4px; }
-    #kibo-pickup-panel .kp-play { top: 4px; left: 4px; }
     #kibo-pickup-panel .kp-check {
       position: absolute; top: 4px; right: 4px; z-index: 3;
       width: 22px; height: 22px; border-radius: 50%;
@@ -539,6 +545,11 @@
     function finish() {
       stopped = true;
       GM_setValue(CONFIG.stateKey, '');
+      // 収集中にどんどん下へスクロールしていくため、終わった時点では
+      // タイムライン（左側）が一番古い投稿あたりに来ている。
+      // 一覧（右側パネル）は毎回一番上＝最新から表示されるので、
+      // 見比べやすいようタイムライン側も一番上（最新）に戻しておく
+      window.scrollTo(0, 0);
       renderResults(items, since, until);
     }
 
@@ -560,6 +571,7 @@
       <div class="kp-grid" id="kp-grid"></div>
     `;
     const grid = bodyEl.querySelector('#kp-grid');
+    bodyEl.scrollTop = 0; // 一覧は常に最新(先頭)から見えるようにする
 
     if (items.length === 0) {
       const empty = document.createElement('div');
@@ -589,21 +601,29 @@
       }
       thumb.appendChild(img);
 
-      if (item.type === 'video') {
-        // ボタンに見えないよう、記号(▶)ではなくテキストのラベルにする
-        const play = document.createElement('div');
-        play.className = 'kp-play';
-        play.textContent = '動画';
-        thumb.appendChild(play);
-      }
+      // 「動画」「複数(N)」ラベルは同じ行に左詰めでまとめて表示する
+      if (item.type === 'video' || item.count > 1) {
+        const labels = document.createElement('div');
+        labels.className = 'kp-labels';
 
-      if (item.count > 1) {
-        // 複数枚（画像複数、または画像+動画の組み合わせ）の投稿であることが
-        // サムネイル1枚だけでは分からないため、件数バッジを付ける
-        const multi = document.createElement('div');
-        multi.className = 'kp-multi';
-        multi.textContent = `複数(${item.count})`;
-        thumb.appendChild(multi);
+        if (item.type === 'video') {
+          // ボタンに見えないよう、記号(▶)ではなくテキストのラベルにする
+          const play = document.createElement('div');
+          play.className = 'kp-play';
+          play.textContent = '動画';
+          labels.appendChild(play);
+        }
+
+        if (item.count > 1) {
+          // 複数枚（画像複数、または画像+動画の組み合わせ）の投稿であることが
+          // サムネイル1枚だけでは分からないため、件数バッジを付ける
+          const multi = document.createElement('div');
+          multi.className = 'kp-multi';
+          multi.textContent = `複数(${item.count})`;
+          labels.appendChild(multi);
+        }
+
+        thumb.appendChild(labels);
       }
 
       // 以前はマウスオーバーでX公式の埋め込み(iframe)を表示していたが、

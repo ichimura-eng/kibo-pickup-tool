@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         きぼうを見よう ピックアップツール
 // @namespace    https://github.com/ichimura-eng/kibo-pickup-tool
-// @version      0.2.8
+// @version      0.3.0
 // @description  「#きぼうを見よう」のX投稿を期間指定で収集し、画像・動画付きの投稿だけをサムネイル一覧で確認してURLをまとめてコピーできるツール
 // @author       ichimura-eng
 // @match        https://x.com/*
@@ -82,12 +82,14 @@
     return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
   }
 
-  function buildSearchUrl(hashtag, since, until) {
+  function buildSearchUrl(hashtag, since, until, mode) {
     // until: は「その日の0時より前」を意味するため、指定した終了日を
     // 含めるために1日足す
     const untilExclusive = addDays(until, 1);
     const query = `${hashtag} since:${since} until:${untilExclusive}`;
-    const params = new URLSearchParams({ q: query, src: 'typed_query', f: 'live' });
+    const params = new URLSearchParams({ q: query, src: 'typed_query' });
+    // mode: 'live' = 「最新」タブ、'top' = 「話題のポスト」タブ（fパラメータなし）
+    if (mode === 'live') params.set('f', 'live');
     return `https://x.com/search?${params.toString()}`;
   }
 
@@ -456,8 +458,13 @@
         alert(`期間は最大${CONFIG.maxRangeDays}日程度にしてください。`);
         return;
       }
-      GM_setValue(CONFIG.stateKey, JSON.stringify({ hashtag, since: s, until: u, autostart: true }));
-      window.location.href = buildSearchUrl(hashtag, s, u);
+      // まず「最新」タブで収集し、終わったら自動で「話題のポスト」タブでも
+      // 検索して補完する（Xの「最新」検索は仕様上、投稿が漏れることがあるため）
+      GM_setValue(
+        CONFIG.stateKey,
+        JSON.stringify({ hashtag, since: s, until: u, phase: 'live', items: [], autostart: true })
+      );
+      window.location.href = buildSearchUrl(hashtag, s, u, 'live');
     });
   }
 
@@ -475,30 +482,32 @@
   // =========================================================
   // 収集フェーズ
   // =========================================================
-  function startCollecting(hashtag, since, until) {
+  function startCollecting(hashtag, since, until, phase, seedItems) {
     ensurePanel();
     if (!isLoggedIn()) {
       renderWarning('Xにログインしてから実行してください。（ログイン状態を検知できませんでした）');
       return;
     }
 
-    const seenIds = new Set();
-    const items = []; // 収集順を保持
+    const items = seedItems ? seedItems.slice() : []; // フェーズをまたいで引き継ぐ
+    const seenIds = new Set(items.map((i) => i.id));
     let stableRounds = 0;
     let stopped = false;
     const startedAt = Date.now();
+    const phaseLabel = phase === 'top' ? '話題のポストで補完中' : '最新タブで収集中';
 
     function renderProgress() {
       bodyEl.innerHTML = `
         <div class="kp-status">
           期間: ${since} 〜 ${until}<br>
-          収集中... 現在 <b>${items.length}</b> 件（画像・動画付きのみ）
+          ${phaseLabel}... 現在 <b>${items.length}</b> 件（画像・動画付きのみ）
         </div>
         <div class="kp-row">
           <button id="kp-stop-btn" class="kp-secondary" style="width:100%">収集をここで終了して確認する</button>
         </div>
       `;
-      bodyEl.querySelector('#kp-stop-btn').addEventListener('click', finish);
+      // 手動で止めた場合は、話題タブへの補完フェーズには進まずすぐ結果を出す
+      bodyEl.querySelector('#kp-stop-btn').addEventListener('click', finalize);
       footerEl.innerHTML = '';
     }
 
@@ -542,8 +551,22 @@
       setTimeout(tick, CONFIG.scrollIntervalMs);
     }
 
-    function finish() {
+    function finalize() {
+      // その場で収集を打ち切って結果を表示する（フェーズは進めない）
       stopped = true;
+
+      if (phase === 'top') {
+        // 「話題のポスト」タブに来ている状態で終わると、左側のタイムラインが
+        // 話題タブのまま残ってしまう。見比べる際は「最新」タブの方が便利なため、
+        // 結果表示の前に一度「最新」タブへ戻ってから一覧を出す
+        GM_setValue(
+          CONFIG.stateKey,
+          JSON.stringify({ hashtag, since, until, phase: 'done', items })
+        );
+        window.location.href = buildSearchUrl(hashtag, since, until, 'live');
+        return;
+      }
+
       GM_setValue(CONFIG.stateKey, '');
       // 収集中にどんどん下へスクロールしていくため、終わった時点では
       // タイムライン（左側）が一番古い投稿あたりに来ている。
@@ -551,6 +574,22 @@
       // 見比べやすいようタイムライン側も一番上（最新）に戻しておく
       window.scrollTo(0, 0);
       renderResults(items, since, until);
+    }
+
+    function finish() {
+      // 自然に完了した場合。「最新」タブが終わったら、続けて「話題のポスト」
+      // タブでも同じ期間を検索し、最新タブ側で漏れていた投稿を補う。
+      // （Xの「最新」検索は仕様上、投稿が漏れることがあるため）
+      stopped = true;
+      if (phase !== 'top') {
+        GM_setValue(
+          CONFIG.stateKey,
+          JSON.stringify({ hashtag, since, until, phase: 'top', items, autostart: true })
+        );
+        window.location.href = buildSearchUrl(hashtag, since, until, 'top');
+        return;
+      }
+      finalize();
     }
 
     renderProgress();
@@ -738,9 +777,19 @@
 
     const onSearchPage = location.pathname === '/search';
 
+    if (pending && pending.phase === 'done' && onSearchPage) {
+      // 「最新」タブに戻すためだけの遷移。収集はもうすべて終わっているので、
+      // 再収集はせずそのまま結果を表示する
+      GM_setValue(CONFIG.stateKey, '');
+      window.scrollTo(0, 0);
+      renderResults(pending.items || [], pending.since, pending.until);
+      return;
+    }
+
     if (pending && pending.autostart && onSearchPage) {
       // 検索ページへの遷移後、自動で収集を開始する
-      startCollecting(pending.hashtag, pending.since, pending.until);
+      // （phase='top'の場合は、前フェーズ=最新タブで集めたitemsを引き継ぐ）
+      startCollecting(pending.hashtag, pending.since, pending.until, pending.phase, pending.items);
     } else {
       renderSearchForm();
     }

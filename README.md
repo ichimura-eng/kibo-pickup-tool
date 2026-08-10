@@ -4,9 +4,9 @@ Xで「#きぼうを見よう」を期間指定で検索し、画像・動画が
 
 ## 初回セットアップ
 
-1. <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener noreferrer">Tampermonkey</a>をブラウザにインストールする（Chrome Web Storeで「Chromeに追加」）
+1. [Tampermonkey](https://www.tampermonkey.net/)をブラウザにインストールする（Chrome Web Storeで「Chromeに追加」）
 2. 以下のリンクを開く → Tampermonkeyが「インストールしますか？」と聞いてくるので「インストール」をクリック
-   - <a href="https://raw.githubusercontent.com/ichimura-eng/kibo-pickup-tool/main/kibo-pickup.user.js" target="_blank" rel="noopener noreferrer">https://raw.githubusercontent.com/ichimura-eng/kibo-pickup-tool/main/kibo-pickup.user.js</a>
+   - https://raw.githubusercontent.com/ichimura-eng/kibo-pickup-tool/main/kibo-pickup.user.js
 3. これで準備完了。x.com（またはtwitter.com）を開くと、画面右上にツールのパネルが表示されます。
 
 ## 使い方
